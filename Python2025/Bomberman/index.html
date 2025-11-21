@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BomberBlast</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #2c3e50; /* Dark blue-gray */
+            margin: 0;
+            font-family: 'Inter', sans-serif;
+            color: #ecf0f1; /* Light gray */
+            overflow: hidden; /* Prevent scrollbars */
+        }
+
+        canvas {
+            background-color: #34495e; /* Slightly lighter blue-gray */
+            display: block;
+            border-radius: 12px;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
+            max-width: 95vw; /* Ensure responsiveness */
+            max-height: 80vh; /* Ensure responsiveness */
+            margin-bottom: 20px;
+        }
+
+        #game-messages {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 3em;
+            font-weight: bold;
+            color: #e74c3c; /* Red */
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.6);
+            z-index: 10;
+            display: none; /* Hidden by default */
+            text-align: center;
+        }
+
+        #restart-button {
+            background-color: #27ae60; /* Green */
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.2em;
+            cursor: pointer;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+            transition: background-color 0.3s ease, transform 0.2s ease;
+            display: none; /* Hidden by default */
+        }
+
+        #restart-button:hover {
+            background-color: #2ecc71; /* Lighter green */
+            transform: translateY(-2px);
+        }
+
+        #restart-button:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            color: #f1c40f; /* Yellow */
+            margin-bottom: 20px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.6);
+        }
+
+        .controls {
+            background-color: #34495e;
+            padding: 15px 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        .controls p {
+            margin: 5px 0;
+            font-size: 1.1em;
+        }
+
+        .controls span {
+            font-weight: bold;
+            color: #3498db; /* Blue */
+        }
+    </style>
+</head>
+<body>
+    <h1>BomberBlast!</h1>
+    <canvas id="gameCanvas"></canvas>
+    <div id="game-messages"></div>
+    <button id="restart-button">Play Again</button>
+
+    <div class="controls">
+        <p>Move: <span>Arrow Keys</span> or <span>WASD</span></p>
+        <p>Place Bomb: <span>Spacebar</span></p>
+    </div>
+
+    <script>
+        // --- Game Constants ---
+        const TILE_SIZE = 40; // Size of each tile in pixels
+        const MAP_WIDTH = 15; // Number of tiles wide
+        const MAP_HEIGHT = 13; // Number of tiles high
+        const PLAYER_SPEED = 2; // Pixels per frame
+        const BOMB_TIMER = 2000; // Bomb explosion delay in milliseconds
+        const EXPLOSION_DURATION = 500; // Explosion display duration in milliseconds
+        const POWER_UP_CHANCE = 0.3; // Chance for a power-up to spawn under a destructible block
+
+        // --- Game State Variables ---
+        let canvas, ctx;
+        let map; // 2D array representing the game board
+        let player;
+        let enemies;
+        let bombs;
+        let explosions;
+        let powerUps;
+        let gameOver = false;
+        let gameWon = false;
+        let lastFrameTime = 0;
+        let animationFrameId;
+
+        // Key states
+        const keys = {
+            ArrowUp: false,
+            ArrowDown: false,
+            ArrowLeft: false,
+            ArrowRight: false,
+            w: false,
+            a: false,
+            s: false,
+            d: false,
+            ' ': false // Spacebar
+        };
+
+        // --- Game Objects ---
+
+        // Player object constructor
+        function Player(x, y) {
+            this.x = x * TILE_SIZE;
+            this.y = y * TILE_SIZE;
+            this.dx = 0;
+            this.dy = 0;
+            this.speed = PLAYER_SPEED;
+            this.bombCapacity = 1; // Max bombs player can place at once
+            this.bombsPlaced = 0; // Current bombs placed
+            this.bombRange = 1; // Explosion range (tiles from center)
+            this.alive = true;
+        }
+
+        // Enemy object constructor
+        function Enemy(x, y, type = 'basic') {
+            this.x = x * TILE_SIZE;
+            this.y = y * TILE_SIZE;
+            this.dx = 0;
+            this.dy = 0;
+            this.speed = 1; // Slower than player
+            this.type = type; // 'basic', 'fast', etc.
+            this.alive = true;
+            this.lastMoveTime = 0;
+            this.moveInterval = 500; // How often basic enemy changes direction
+        }
+
+        // Bomb object constructor
+        function Bomb(x, y, range, owner) {
+            this.x = x; // Pixel coordinates
+            this.y = y; // Pixel coordinates
+            this.range = range;
+            this.owner = owner; // Reference to the player who placed it
+            this.timer = BOMB_TIMER; // Countdown to explosion
+            this.exploded = false;
+        }
+
+        // Explosion object constructor
+        function Explosion(x, y, segments) {
+            this.x = x; // Pixel coordinates
+            this.y = y; // Pixel coordinates
+            this.segments = segments; // Array of {x, y} for each part of the explosion
+            this.timer = EXPLOSION_DURATION; // How long the explosion is visible
+        }
+
+        // Power-up object constructor
+        function PowerUp(x, y, type) {
+            this.x = x; // Tile coordinates
+            this.y = y; // Tile coordinates
+            this.type = type; // 'bomb', 'range', 'speed'
+        }
+
+        // --- Map Tile Types ---
+        const TILE = {
+            EMPTY: 0,
+            SOLID_WALL: 1,
+            DESTRUCTIBLE_BLOCK: 2,
+            PLAYER_START: 3, // Used for initial map generation
+            ENEMY_START: 4,  // Used for initial map generation
+            BOMB: 5,
+            EXPLOSION: 6,
+            POWER_UP: 7
+        };
+
+        // --- Game Initialization ---
+        function initGame() {
+            canvas = document.getElementById('gameCanvas');
+            ctx = canvas.getContext('2d');
+
+            canvas.width = MAP_WIDTH * TILE_SIZE;
+            canvas.height = MAP_HEIGHT * TILE_SIZE;
+
+            document.getElementById('game-messages').style.display = 'none';
+            document.getElementById('restart-button').style.display = 'none';
+
+            resetGameState();
+            generateMap();
+            placeEntities();
+
+            if (!animationFrameId) { // Only start the loop if not already running
+                animationFrameId = requestAnimationFrame(gameLoop);
+            }
+        }
+
+        function resetGameState() {
+            player = null;
+            enemies = [];
+            bombs = [];
+            explosions = [];
+            powerUps = [];
+            gameOver = false;
+            gameWon = false;
+            lastFrameTime = 0;
+            // Clear any pending animation frame if restarting
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+        }
+
+        function generateMap() {
+            map = Array(MAP_HEIGHT).fill(0).map(() => Array(MAP_WIDTH).fill(TILE.EMPTY));
+
+            // Create solid outer walls
+            for (let r = 0; r < MAP_HEIGHT; r++) {
+                for (let c = 0; c < MAP_WIDTH; c++) {
+                    if (r === 0 || r === MAP_HEIGHT - 1 || c === 0 || c === MAP_WIDTH - 1) {
+                        map[r][c] = TILE.SOLID_WALL;
+                    }
+                }
+            }
+
+            // Create inner solid walls (every other tile)
+            for (let r = 2; r < MAP_HEIGHT - 1; r += 2) {
+                for (let c = 2; c < MAP_WIDTH - 1; c += 2) {
+                    map[r][c] = TILE.SOLID_WALL;
+                }
+            }
+
+            // Place destructible blocks randomly
+            for (let r = 1; r < MAP_HEIGHT - 1; r++) {
+                for (let c = 1; c < MAP_WIDTH - 1; c++) {
+                    // Avoid placing blocks near player start
+                    if (map[r][c] === TILE.EMPTY &&
+                        !((r === 1 && c === 1) || (r === 1 && c === 2) || (r === 2 && c === 1))) { // Player start area
+                        if (Math.random() < 0.6) { // 60% chance to be a destructible block
+                            map[r][c] = TILE.DESTRUCTIBLE_BLOCK;
+                        }
+                    }
+                }
+            }
+        }
+
+        function placeEntities() {
+            // Place player
+            player = new Player(1, 1); // Start at (1,1)
+
+            // Place enemies randomly, avoiding player start area and solid walls
+            const enemyCount = 3;
+            for (let i = 0; i < enemyCount; i++) {
+                let placed = false;
+                while (!placed) {
+                    const r = Math.floor(Math.random() * (MAP_HEIGHT - 2)) + 1;
+                    const c = Math.floor(Math.random() * (MAP_WIDTH - 2)) + 1;
+
+                    // Ensure enemy is not on a solid wall, destructible block, or near player start
+                    if (map[r][c] === TILE.EMPTY &&
+                        Math.abs(r - 1) + Math.abs(c - 1) > 3) { // Manhattan distance > 3 from player start
+                        enemies.push(new Enemy(c, r)); // x, y are column, row
+                        placed = true;
+                    }
+                }
+            }
+        }
+
+        // --- Game Loop ---
+        function gameLoop(currentTime) {
+            if (gameOver || gameWon) {
+                return; // Stop the loop
+            }
+
+            const deltaTime = currentTime - lastFrameTime;
+            lastFrameTime = currentTime;
+
+            update(deltaTime);
+            draw();
+
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // --- Update Game State ---
+        function update(deltaTime) {
+            if (!player.alive) {
+                gameOver = true;
+                displayMessage("GAME OVER!", "#e74c3c");
+                return;
+            }
+
+            if (enemies.filter(e => e.alive).length === 0) {
+                gameWon = true;
+                displayMessage("YOU WIN!", "#27ae60");
+                return;
+            }
+
+            // Update player movement
+            updatePlayer(deltaTime);
+
+            // Update bombs
+            updateBombs(deltaTime);
+
+            // Update explosions
+            updateExplosions(deltaTime);
+
+            // Update enemies
+            updateEnemies(deltaTime);
+
+            // Check for player-enemy collision
+            checkPlayerEnemyCollision();
+        }
+
+        function updatePlayer(deltaTime) {
+            if (!player.alive) return;
+
+            const nextX = player.x + player.dx * player.speed;
+            const nextY = player.y + player.dy * player.speed;
+
+            // Get current tile coordinates
+            const playerGridX = Math.floor((player.x + TILE_SIZE / 2) / TILE_SIZE);
+            const playerGridY = Math.floor((player.y + TILE_SIZE / 2) / TILE_SIZE);
+
+            // Predict next tile coordinates for collision
+            const nextGridX = Math.floor((nextX + TILE_SIZE / 2) / TILE_SIZE);
+            const nextGridY = Math.floor((nextY + TILE_SIZE / 2) / TILE_SIZE);
+
+            // Check for collision with walls or destructible blocks
+            let canMoveX = true;
+            let canMoveY = true;
+
+            // Horizontal movement check
+            if (player.dx !== 0) {
+                const targetTileX = player.dx > 0 ? Math.ceil(nextX / TILE_SIZE) : Math.floor(nextX / TILE_SIZE);
+                const tileAtHeadX = player.dx > 0 ? Math.floor((player.x + TILE_SIZE - 1) / TILE_SIZE) : Math.floor(player.x / TILE_SIZE);
+
+                if (targetTileX !== tileAtHeadX) { // If crossing a tile boundary
+                    // Check top-left and bottom-left/top-right and bottom-right corners
+                    const checkY1 = Math.floor(player.y / TILE_SIZE);
+                    const checkY2 = Math.floor((player.y + TILE_SIZE - 1) / TILE_SIZE);
+
+                    if (map[checkY1][targetTileX] >= TILE.SOLID_WALL && map[checkY1][targetTileX] <= TILE.BOMB ||
+                        map[checkY2][targetTileX] >= TILE.SOLID_WALL && map[checkY2][targetTileX] <= TILE.BOMB) {
+                        canMoveX = false;
+                    }
+                }
+            }
+
+            // Vertical movement check
+            if (player.dy !== 0) {
+                const targetTileY = player.dy > 0 ? Math.ceil(nextY / TILE_SIZE) : Math.floor(nextY / TILE_SIZE);
+                const tileAtHeadY = player.dy > 0 ? Math.floor((player.y + TILE_SIZE - 1) / TILE_SIZE) : Math.floor(player.y / TILE_SIZE);
+
+                if (targetTileY !== tileAtHeadY) { // If crossing a tile boundary
+                    // Check top-left and top-right/bottom-left and bottom-right corners
+                    const checkX1 = Math.floor(player.x / TILE_SIZE);
+                    const checkX2 = Math.floor((player.x + TILE_SIZE - 1) / TILE_SIZE);
+
+                    if (map[targetTileY][checkX1] >= TILE.SOLID_WALL && map[targetTileY][checkX1] <= TILE.BOMB ||
+                        map[targetTileY][checkX2] >= TILE.SOLID_WALL && map[targetTileY][checkX2] <= TILE.BOMB) {
+                        canMoveY = false;
+                    }
+                }
+            }
+
+            // Adjust position to snap to grid if hitting a wall
+            if (!canMoveX) {
+                player.x = player.dx > 0 ? playerGridX * TILE_SIZE : (playerGridX + 1) * TILE_SIZE - TILE_SIZE;
+                player.dx = 0;
+            }
+            if (!canMoveY) {
+                player.y = player.dy > 0 ? playerGridY * TILE_SIZE : (playerGridY + 1) * TILE_SIZE - TILE_SIZE;
+                player.dy = 0;
+            }
+
+            if (canMoveX) player.x = nextX;
+            if (canMoveY) player.y = nextY;
+
+            // Keep player within canvas bounds
+            player.x = Math.max(0, Math.min(canvas.width - TILE_SIZE, player.x));
+            player.y = Math.max(0, Math.min(canvas.height - TILE_SIZE, player.y));
+
+            // Check for power-up collision
+            const playerCenterX = player.x + TILE_SIZE / 2;
+            const playerCenterY = player.y + TILE_SIZE / 2;
+
+            powerUps.forEach((pu, index) => {
+                const puCenterX = pu.x * TILE_SIZE + TILE_SIZE / 2;
+                const puCenterY = pu.y * TILE_SIZE + TILE_SIZE / 2;
+
+                const distance = Math.sqrt(
+                    Math.pow(playerCenterX - puCenterX, 2) +
+                    Math.pow(playerCenterY - puCenterY, 2)
+                );
+
+                if (distance < TILE_SIZE * 0.7) { // If player is close enough to pick up
+                    applyPowerUp(pu.type);
+                    powerUps.splice(index, 1); // Remove power-up
+                    map[pu.y][pu.x] = TILE.EMPTY; // Clear map tile
+                }
+            });
+        }
+
+        function updateBombs(deltaTime) {
+            for (let i = bombs.length - 1; i >= 0; i--) {
+                const bomb = bombs[i];
+                bomb.timer -= deltaTime;
+
+                if (bomb.timer <= 0 && !bomb.exploded) {
+                    explodeBomb(bomb);
+                    bomb.exploded = true; // Mark as exploded to prevent re-explosion
+                }
+            }
+        }
+
+        function explodeBomb(bomb) {
+            const bombGridX = Math.floor((bomb.x + TILE_SIZE / 2) / TILE_SIZE);
+            const bombGridY = Math.floor((bomb.y + TILE_SIZE / 2) / TILE_SIZE);
+
+            const affectedSegments = [{ x: bombGridX, y: bombGridY }]; // Center of explosion
+
+            // Directions: right, left, down, up
+            const directions = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+            for (const [dx, dy] of directions) {
+                for (let i = 1; i <= bomb.range; i++) {
+                    const targetX = bombGridX + dx * i;
+                    const targetY = bombGridY + dy * i;
+
+                    if (targetX < 0 || targetX >= MAP_WIDTH || targetY < 0 || targetY >= MAP_HEIGHT) {
+                        break; // Out of bounds
+                    }
+
+                    const tileType = map[targetY][targetX];
+
+                    if (tileType === TILE.SOLID_WALL) {
+                        break; // Stop explosion propagation
+                    }
+
+                    affectedSegments.push({ x: targetX, y: targetY });
+
+                    if (tileType === TILE.DESTRUCTIBLE_BLOCK) {
+                        map[targetY][targetX] = TILE.EMPTY; // Destroy block
+                        spawnPowerUp(targetX, targetY); // Attempt to spawn power-up
+                        break; // Stop explosion propagation after hitting destructible block
+                    }
+
+                    // If it hits another bomb, trigger that bomb's explosion immediately
+                    if (tileType === TILE.BOMB) {
+                        const hitBomb = bombs.find(b =>
+                            Math.floor((b.x + TILE_SIZE / 2) / TILE_SIZE) === targetX &&
+                            Math.floor((b.y + TILE_SIZE / 2) / TILE_SIZE) === targetY &&
+                            !b.exploded
+                        );
+                        if (hitBomb) {
+                            hitBomb.timer = 0; // Set timer to 0 to explode next frame
+                        }
+                        // Continue explosion through other bombs, but stop if it hits a wall/destructible after a bomb
+                        // For simplicity, we'll let it propagate through bombs and then stop at next solid/destructible
+                    }
+                }
+            }
+
+            explosions.push(new Explosion(bomb.x, bomb.y, affectedSegments));
+
+            // Remove bomb from map and bomb array
+            const bombIndex = bombs.indexOf(bomb);
+            if (bombIndex > -1) {
+                bombs.splice(bombIndex, 1);
+                // Clear the tile where the bomb was, unless it's now covered by an explosion
+                // This is handled by the explosion drawing, but map needs to be updated
+                map[bombGridY][bombGridX] = TILE.EMPTY;
+            }
+            bomb.owner.bombsPlaced--; // Decrement bomb count for the owner
+        }
+
+        function spawnPowerUp(x, y) {
+            if (Math.random() < POWER_UP_CHANCE) {
+                const types = ['bomb', 'range', 'speed'];
+                const randomType = types[Math.floor(Math.random() * types.length)];
+                powerUps.push(new PowerUp(x, y, randomType));
+                map[y][x] = TILE.POWER_UP; // Mark map tile
+            }
+        }
+
+        function applyPowerUp(type) {
+            switch (type) {
+                case 'bomb':
+                    player.bombCapacity++;
+                    break;
+                case 'range':
+                    player.bombRange++;
+                    break;
+                case 'speed':
+                    player.speed += 0.5; // Small speed increase
+                    break;
+            }
+        }
+
+        function updateExplosions(deltaTime) {
+            for (let i = explosions.length - 1; i >= 0; i--) {
+                const explosion = explosions[i];
+                explosion.timer -= deltaTime;
+
+                // Check for player/enemy death by explosion
+                explosion.segments.forEach(segment => {
+                    const tileX = segment.x;
+                    const tileY = segment.y;
+
+                    // Check player
+                    if (player.alive && isColliding(player, tileX * TILE_SIZE, tileY * TILE_SIZE, TILE_SIZE, TILE_SIZE)) {
+                        player.alive = false;
+                    }
+
+                    // Check enemies
+                    enemies.forEach(enemy => {
+                        if (enemy.alive && isColliding(enemy, tileX * TILE_SIZE, tileY * TILE_SIZE, TILE_SIZE, TILE_SIZE)) {
+                            enemy.alive = false;
+                        }
+                    });
+                });
+
+                if (explosion.timer <= 0) {
+                    explosions.splice(i, 1);
+                }
+            }
+        }
+
+        function updateEnemies(deltaTime) {
+            enemies.forEach(enemy => {
+                if (!enemy.alive) return;
+
+                const enemyGridX = Math.floor((enemy.x + TILE_SIZE / 2) / TILE_SIZE);
+                const enemyGridY = Math.floor((enemy.y + TILE_SIZE / 2) / TILE_SIZE);
+
+                // Simple AI: change direction randomly at intervals or if blocked
+                enemy.lastMoveTime += deltaTime;
+                if (enemy.lastMoveTime >= enemy.moveInterval || (enemy.dx === 0 && enemy.dy === 0)) {
+                    enemy.lastMoveTime = 0;
+                    const directions = [[0, 1], [0, -1], [1, 0], [-1, 0]]; // Down, Up, Right, Left
+                    let chosenDirection = directions[Math.floor(Math.random() * directions.length)];
+                    let newDx = chosenDirection[0];
+                    let newDy = chosenDirection[1];
+
+                    // Check if the new direction is valid
+                    const nextTileX = enemyGridX + newDx;
+                    const nextTileY = enemyGridY + newDy;
+
+                    if (nextTileX >= 0 && nextTileX < MAP_WIDTH && nextTileY >= 0 && nextTileY < MAP_HEIGHT &&
+                        map[nextTileY][nextTileX] === TILE.EMPTY) {
+                        enemy.dx = newDx;
+                        enemy.dy = newDy;
+                    } else {
+                        // If blocked, try another random direction
+                        enemy.dx = 0;
+                        enemy.dy = 0; // Stop if blocked
+                    }
+                }
+
+                // Move enemy
+                const nextX = enemy.x + enemy.dx * enemy.speed;
+                const nextY = enemy.y + enemy.dy * enemy.speed;
+
+                const enemyNextGridX = Math.floor((nextX + TILE_SIZE / 2) / TILE_SIZE);
+                const enemyNextGridY = Math.floor((nextY + TILE_SIZE / 2) / TILE_SIZE);
+
+                let canMoveX = true;
+                let canMoveY = true;
+
+                // Horizontal movement check (similar to player)
+                if (enemy.dx !== 0) {
+                    const targetTileX = enemy.dx > 0 ? Math.ceil(nextX / TILE_SIZE) : Math.floor(nextX / TILE_SIZE);
+                    const tileAtHeadX = enemy.dx > 0 ? Math.floor((enemy.x + TILE_SIZE - 1) / TILE_SIZE) : Math.floor(enemy.x / TILE_SIZE);
+
+                    if (targetTileX !== tileAtHeadX) {
+                        const checkY1 = Math.floor(enemy.y / TILE_SIZE);
+                        const checkY2 = Math.floor((enemy.y + TILE_SIZE - 1) / TILE_SIZE);
+
+                        if (map[checkY1][targetTileX] >= TILE.SOLID_WALL && map[checkY1][targetTileX] <= TILE.BOMB ||
+                            map[checkY2][targetTileX] >= TILE.SOLID_WALL && map[checkY2][targetTileX] <= TILE.BOMB) {
+                            canMoveX = false;
+                            enemy.dx = 0; // Stop movement
+                        }
+                    }
+                }
+
+                // Vertical movement check (similar to player)
+                if (enemy.dy !== 0) {
+                    const targetTileY = enemy.dy > 0 ? Math.ceil(nextY / TILE_SIZE) : Math.floor(nextY / TILE_SIZE);
+                    const tileAtHeadY = enemy.dy > 0 ? Math.floor((enemy.y + TILE_SIZE - 1) / TILE_SIZE) : Math.floor(enemy.y / TILE_SIZE);
+
+                    if (targetTileY !== tileAtHeadY) {
+                        const checkX1 = Math.floor(enemy.x / TILE_SIZE);
+                        const checkX2 = Math.floor((enemy.x + TILE_SIZE - 1) / TILE_SIZE);
+
+                        if (map[targetTileY][checkX1] >= TILE.SOLID_WALL && map[targetTileY][checkX1] <= TILE.BOMB ||
+                            map[targetTileY][checkX2] >= TILE.SOLID_WALL && map[targetTileY][checkX2] <= TILE.BOMB) {
+                            canMoveY = false;
+                            enemy.dy = 0; // Stop movement
+                        }
+                    }
+                }
+
+                if (canMoveX) enemy.x = nextX;
+                if (canMoveY) enemy.y = nextY;
+
+                // Keep enemy within canvas bounds
+                enemy.x = Math.max(0, Math.min(canvas.width - TILE_SIZE, enemy.x));
+                enemy.y = Math.max(0, Math.min(canvas.height - TILE_SIZE, enemy.y));
+            });
+        }
+
+        function checkPlayerEnemyCollision() {
+            if (!player.alive) return;
+
+            enemies.forEach(enemy => {
+                if (enemy.alive && isColliding(player, enemy.x, enemy.y, TILE_SIZE, TILE_SIZE)) {
+                    player.alive = false;
+                }
+            });
+        }
+
+        // Simple AABB collision detection
+        function isColliding(obj1, x2, y2, w2, h2) {
+            return obj1.x < x2 + w2 &&
+                   obj1.x + TILE_SIZE > x2 &&
+                   obj1.y < y2 + h2 &&
+                   obj1.y + TILE_SIZE > y2;
+        }
+
+        // --- Drawing Functions ---
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear canvas
+
+            drawMap();
+            drawPowerUps();
+            drawBombs();
+            drawExplosions();
+            drawPlayer();
+            drawEnemies();
+
+            if (gameOver || gameWon) {
+                document.getElementById('restart-button').style.display = 'block';
+            }
+        }
+
+        function drawMap() {
+            for (let r = 0; r < MAP_HEIGHT; r++) {
+                for (let c = 0; c < MAP_WIDTH; c++) {
+                    const tileType = map[r][c];
+                    const x = c * TILE_SIZE;
+                    const y = r * TILE_SIZE;
+
+                    switch (tileType) {
+                        case TILE.SOLID_WALL:
+                            ctx.fillStyle = '#7f8c8d'; // Gray
+                            ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+                            ctx.strokeStyle = '#6c7a7b';
+                            ctx.lineWidth = 2;
+                            ctx.strokeRect(x, y, TILE_SIZE, TILE_SIZE);
+                            break;
+                        case TILE.DESTRUCTIBLE_BLOCK:
+                            ctx.fillStyle = '#e67e22'; // Orange
+                            ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+                            ctx.strokeStyle = '#d35400';
+                            ctx.lineWidth = 2;
+                            ctx.strokeRect(x, y, TILE_SIZE, TILE_SIZE);
+                            // Add some texture
+                            ctx.fillStyle = 'rgba(0,0,0,0.1)';
+                            ctx.fillRect(x + TILE_SIZE * 0.1, y + TILE_SIZE * 0.1, TILE_SIZE * 0.8, TILE_SIZE * 0.8);
+                            break;
+                        case TILE.EMPTY:
+                            // Draw the floor
+                            ctx.fillStyle = '#4a698c'; // Darker blue-gray for floor
+                            ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+                            break;
+                    }
+                }
+            }
+        }
+
+        function drawPlayer() {
+            if (!player.alive) return;
+
+            ctx.fillStyle = '#3498db'; // Blue
+            ctx.beginPath();
+            ctx.arc(player.x + TILE_SIZE / 2, player.y + TILE_SIZE / 2, TILE_SIZE / 2 - 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#2980b9';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+
+            // Add a simple face (eyes)
+            ctx.fillStyle = 'white';
+            ctx.beginPath();
+            ctx.arc(player.x + TILE_SIZE * 0.35, player.y + TILE_SIZE * 0.4, TILE_SIZE * 0.1, 0, Math.PI * 2);
+            ctx.arc(player.x + TILE_SIZE * 0.65, player.y + TILE_SIZE * 0.4, TILE_SIZE * 0.1, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'black';
+            ctx.beginPath();
+            ctx.arc(player.x + TILE_SIZE * 0.35, player.y + TILE_SIZE * 0.4, TILE_SIZE * 0.05, 0, Math.PI * 2);
+            ctx.arc(player.x + TILE_SIZE * 0.65, player.y + TILE_SIZE * 0.4, TILE_SIZE * 0.05, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function drawEnemies() {
+            enemies.forEach(enemy => {
+                if (!enemy.alive) return;
+
+                ctx.fillStyle = '#e74c3c'; // Red
+                ctx.beginPath();
+                ctx.arc(enemy.x + TILE_SIZE / 2, enemy.y + TILE_SIZE / 2, TILE_SIZE / 2 - 5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#c0392b';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+
+                // Add simple 'X' for eyes to distinguish from player
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(enemy.x + TILE_SIZE * 0.3, enemy.y + TILE_SIZE * 0.3);
+                ctx.lineTo(enemy.x + TILE_SIZE * 0.7, enemy.y + TILE_SIZE * 0.7);
+                ctx.moveTo(enemy.x + TILE_SIZE * 0.7, enemy.y + TILE_SIZE * 0.3);
+                ctx.lineTo(enemy.x + TILE_SIZE * 0.3, enemy.y + TILE_SIZE * 0.7);
+                ctx.stroke();
+            });
+        }
+
+        function drawBombs() {
+            bombs.forEach(bomb => {
+                ctx.fillStyle = '#333'; // Dark gray/black
+                ctx.beginPath();
+                ctx.arc(bomb.x + TILE_SIZE / 2, bomb.y + TILE_SIZE / 2, TILE_SIZE / 2 - 8, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#222';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Draw fuse
+                ctx.fillStyle = '#f1c40f'; // Yellow
+                ctx.fillRect(bomb.x + TILE_SIZE / 2 - 2, bomb.y + 5, 4, 10);
+            });
+        }
+
+        function drawExplosions() {
+            explosions.forEach(explosion => {
+                const alpha = explosion.timer / EXPLOSION_DURATION; // Fade out
+                ctx.fillStyle = `rgba(231, 76, 60, ${alpha})`; // Red with fading alpha
+                ctx.strokeStyle = `rgba(192, 57, 43, ${alpha})`; // Darker red
+                ctx.lineWidth = 3;
+
+                explosion.segments.forEach(segment => {
+                    const x = segment.x * TILE_SIZE;
+                    const y = segment.y * TILE_SIZE;
+                    ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+                    ctx.strokeRect(x, y, TILE_SIZE, TILE_SIZE);
+                });
+            });
+        }
+
+        function drawPowerUps() {
+            powerUps.forEach(pu => {
+                const x = pu.x * TILE_SIZE;
+                const y = pu.y * TILE_SIZE;
+
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'; // Semi-transparent white background
+                ctx.beginPath();
+                ctx.arc(x + TILE_SIZE / 2, y + TILE_SIZE / 2, TILE_SIZE / 3, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.font = `${TILE_SIZE * 0.6}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                switch (pu.type) {
+                    case 'bomb':
+                        ctx.fillStyle = '#f39c12'; // Orange
+                        ctx.fillText('💣', x + TILE_SIZE / 2, y + TILE_SIZE / 2); // Bomb emoji
+                        break;
+                    case 'range':
+                        ctx.fillStyle = '#9b59b6'; // Purple
+                        ctx.fillText('🔥', x + TILE_SIZE / 2, y + TILE_SIZE / 2); // Fire emoji
+                        break;
+                    case 'speed':
+                        ctx.fillStyle = '#1abc9c'; // Turquoise
+                        ctx.fillText('⚡', x + TILE_SIZE / 2, y + TILE_SIZE / 2); // Lightning emoji
+                        break;
+                }
+            });
+        }
+
+        function displayMessage(message, color) {
+            const msgElement = document.getElementById('game-messages');
+            msgElement.textContent = message;
+            msgElement.style.color = color;
+            msgElement.style.display = 'block';
+            cancelAnimationFrame(animationFrameId); // Stop the game loop
+            animationFrameId = null;
+        }
+
+        // --- Event Listeners ---
+        document.addEventListener('keydown', (e) => {
+            if (gameOver || gameWon) return;
+
+            if (e.key === ' ' && !keys[' ']) { // Spacebar for bomb
+                if (player.bombsPlaced < player.bombCapacity) {
+                    const bombGridX = Math.floor((player.x + TILE_SIZE / 2) / TILE_SIZE);
+                    const bombGridY = Math.floor((player.y + TILE_SIZE / 2) / TILE_SIZE);
+
+                    // Prevent placing bomb on top of another bomb
+                    if (!bombs.some(b =>
+                        Math.floor((b.x + TILE_SIZE / 2) / TILE_SIZE) === bombGridX &&
+                        Math.floor((b.y + TILE_SIZE / 2) / TILE_SIZE) === bombGridY
+                    )) {
+                        bombs.push(new Bomb(bombGridX * TILE_SIZE, bombGridY * TILE_SIZE, player.bombRange, player));
+                        player.bombsPlaced++;
+                    }
+                }
+            } else {
+                keys[e.key] = true;
+            }
+            updatePlayerDirection();
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+            updatePlayerDirection();
+        });
+
+        function updatePlayerDirection() {
+            player.dx = 0;
+            player.dy = 0;
+
+            if (keys.ArrowUp || keys.w) {
+                player.dy = -1;
+            }
+            if (keys.ArrowDown || keys.s) {
+                player.dy = 1;
+            }
+            if (keys.ArrowLeft || keys.a) {
+                player.dx = -1;
+            }
+            if (keys.ArrowRight || keys.d) {
+                player.dx = 1;
+            }
+
+            // Normalize diagonal movement speed
+            if (player.dx !== 0 && player.dy !== 0) {
+                const magnitude = Math.sqrt(player.dx * player.dx + player.dy * player.dy);
+                player.dx /= magnitude;
+                player.dy /= magnitude;
+            }
+        }
+
+        document.getElementById('restart-button').addEventListener('click', () => {
+            initGame(); // Re-initialize the game
+        });
+
+        // Start the game when the window loads
+        window.onload = initGame;
+    </script>
+</body>
+</html>

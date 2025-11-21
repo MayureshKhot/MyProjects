@@ -1,0 +1,8 @@
+googlemaps
+requests
+beautifulsoup4
+lxml # Optional, but often faster parser for BeautifulSoup
+groq
+pandas
+openpyxl # For writing .xlsx files with pandas
+python-dotenv
