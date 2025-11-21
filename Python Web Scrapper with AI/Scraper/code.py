@@ -33,7 +33,7 @@ GROQ_RETRY_DELAY = 5 # Seconds
 
 # --- Groq API Setup ---
 try:
-    GROQ_API_KEY = "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"
+    GROQ_API_KEY = "enter your api key"
     if not GROQ_API_KEY:
         raise ValueError("GROQ_API_KEY environment variable not set.")
     groq_client = Groq(api_key=GROQ_API_KEY)
