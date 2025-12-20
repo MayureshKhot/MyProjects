@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>YouTube Downloader</title>
+
+<style>
+  body {
+    margin: 0;
+    background: #0f0f0f;
+    font-family: Arial, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    color: #eee;
+  }
+
+  .container {
+    background: #1a1a1a;
+    padding: 28px;
+    border-radius: 14px;
+    width: 450px;
+    text-align: center;
+    box-shadow: 0 0 30px rgba(255, 0, 60, 0.1);
+  }
+
+  input, select, button {
+    width: 100%;
+    padding: 12px;
+    margin-top: 12px;
+    border-radius: 8px;
+    border: none;
+    font-size: 15px;
+  }
+
+  input, select {
+    background: #2a2a2a;
+    color: white;
+  }
+
+  button {
+    background: #ff3b3b;
+    color: white;
+    font-weight: bold;
+    cursor: pointer;
+    transition: 0.25s;
+  }
+
+  button:hover { background: #ff2525; }
+
+  .thumb {
+    margin-top: 18px;
+    width: 100%;
+    border-radius: 8px;
+  }
+
+  #toast {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: #22c55e;
+    padding: 12px 18px;
+    border-radius: 6px;
+    display: none;
+    animation: fadeInOut 3s ease forwards;
+  }
+
+  @keyframes fadeInOut {
+    0% { opacity: 0; transform: translateY(-10px); }
+    15% { opacity: 1; transform: translateY(0); }
+    85% { opacity: 1; }
+    100% { opacity: 0; transform: translateY(-10px); }
+  }
+</style>
+</head>
+
+<body>
+
+<div class="container">
+  <h2>YouTube Downloader</h2>
+
+  <input id="videoURL" placeholder="Paste YouTube URL...">
+  <button onclick="fetchDetails()">Fetch</button>
+
+  <img id="thumb" class="thumb" style="display:none;">
+  <h3 id="title" style="margin-top:10px;"></h3>
+
+  <select id="format" style="display:none;" onchange="toggleQuality()">
+    <option value="mp4">Video (MP4)</option>
+    <option value="mp3">Audio (MP3)</option>
+  </select>
+
+  <select id="quality" style="display:none;"></select>
+
+  <button id="downloadBtn" style="display:none;" onclick="download()">Download</button>
+</div>
+
+<div id="toast">✅ Download Started</div>
+
+<script>
+  let videoTitle = "";
+
+  function showToast() {
+    const toast = document.getElementById("toast");
+    toast.style.display = "block";
+    setTimeout(() => toast.style.display = "none", 3000);
+  }
+
+  function fetchDetails() {
+    fetch("http://127.0.0.1:5000/get_streams", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: document.getElementById("videoURL").value })
+    })
+    .then(res => res.json())
+    .then(data => {
+      document.getElementById("thumb").src = `https://img.youtube.com/vi/${data.title}/0.jpg`;
+      document.getElementById("thumb").style.display = "block";
+      document.getElementById("title").innerText = data.title;
+      videoTitle = data.title;
+
+      const q = document.getElementById("quality");
+      q.innerHTML = "";
+      data.qualities.forEach(qty => q.innerHTML += `<option value="${qty}">${qty}</option>`);
+
+      document.getElementById("format").style.display = "block";
+      document.getElementById("quality").style.display = "block";
+      document.getElementById("downloadBtn").style.display = "block";
+    });
+  }
+
+  function toggleQuality() {
+    document.getElementById("quality").style.display =
+      (document.getElementById("format").value === "mp4") ? "block" : "none";
+  }
+
+  function download() {
+    showToast();
+
+    fetch("http://127.0.0.1:5000/download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url: document.getElementById("videoURL").value,
+        format: document.getElementById("format").value,
+        quality: document.getElementById("quality").value
+      })
+    })
+    .then(res => res.blob())
+    .then(blob => {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = videoTitle;
+      a.click();
+    });
+  }
+</script>
+
+</body>
+</html>
