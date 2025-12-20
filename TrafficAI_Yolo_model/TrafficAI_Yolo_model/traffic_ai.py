@@ -8,7 +8,7 @@ print("[INFO] loading yolo model...")
 model = YOLO("yolov8s.pt")  # will upgrade later
 
 # video path - hardcoded for now
-VIDEO_PATH = r"D:\Projects\Resume Projects\Object Detection using Yolo\data\4K Road traffic video for object detection and tracking - free download now!.mp4"
+VIDEO_PATH = r"D:\MyProjects\TrafficAI_Yolo_model\TrafficAI_Yolo_model\data\4K Road traffic video for object detection and tracking - free download now!.mp4"
 
 cap = cv2.VideoCapture(VIDEO_PATH)
 
